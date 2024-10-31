@@ -8,9 +8,9 @@
 
 // Descriptor UUIDs
 #define TEMPERATURE_DESCRIPTOR_UUID    "2901" // Characteristic User Description for Temperature
-#define CONTROL_DESCRIPTOR_UUID        "2901" // Characteristic User Description for Control
+#define CONTROL_DESCRIPTOR_UUID        "2902" // Characteristic User Description for Control
 
-const int rgbPin = 48;                 // Data pin for the built-in RGB LED (use GPIO 45 if 48 doesn’t work)
+const int RGB_PIN = 48;                // Data pin for the built-in RGB LED (use GPIO 45 if 48 doesn’t work)
 #define NUM_LEDS 1                     // Number of RGB LEDs (1 if it’s built-in)
 CRGB leds[NUM_LEDS];                   // Array to control RGB LED
 
@@ -20,14 +20,14 @@ NimBLECharacteristic* pControlCharacteristic;
 
 // Callback class for handling client connections and disconnections
 class ServerCallbacks : public NimBLEServerCallbacks {
-    void onConnect(NimBLEServer* pServer) {
+    void onConnect(NimBLEServer* pServer) override {
         isConnected = true;
         Serial.println("Client connected, LED solid blue.");
         leds[0] = CRGB::Blue;          // Set RGB LED to solid blue when connected
         FastLED.show();
     }
 
-    void onDisconnect(NimBLEServer* pServer) {
+    void onDisconnect(NimBLEServer* pServer) override {
         isConnected = false;
         Serial.println("Client disconnected, LED will blink blue.");
         pServer->startAdvertising();   // Restart advertising
@@ -36,7 +36,7 @@ class ServerCallbacks : public NimBLEServerCallbacks {
 
 // Callback for handling client writes to the control characteristic
 class ControlCallback : public NimBLECharacteristicCallbacks {
-    void onWrite(NimBLECharacteristic *pCharacteristic) {
+    void onWrite(NimBLECharacteristic *pCharacteristic) override {
         std::string value = pCharacteristic->getValue();
         if (value.length() > 0) {
             Serial.print("Received control command: ");
@@ -50,7 +50,7 @@ void setup() {
     Serial.begin(115200);
 
     // Initialize FastLED for RGB LED
-    FastLED.addLeds<NEOPIXEL, rgbPin>(leds, NUM_LEDS);
+    FastLED.addLeds<NEOPIXEL, RGB_PIN>(leds, NUM_LEDS);
     leds[0] = CRGB::Blue;              // Set initial color to blue for advertising
     FastLED.show();
 
@@ -106,7 +106,8 @@ void loop() {
         FastLED.show();
 
         // Update the temperature value and notify connected clients periodically
-        pTemperatureCharacteristic->setValue("24.1");  // Example updated temperature
+        float temperature = 24.1;  // Example temperature value, replace with actual sensor reading
+        pTemperatureCharacteristic->setValue(String(temperature).c_str());  // Update temperature dynamically
         pTemperatureCharacteristic->notify();          // Send notification to clients
         delay(5000);                                   // Update every 5 seconds
     } else {
