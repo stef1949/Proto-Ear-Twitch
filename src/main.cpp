@@ -208,7 +208,7 @@ void loop() {
 
         // Map angles to servo positions
         int servo1Position = map(constrain(pitch, -90, 90), -90, 90, 0, 180);
-        int servo2Position = map(constrain(roll, -89, 89), -90, 90, 0, 180);
+        int servo2Position = map(constrain(roll, -90, 90), -90, 90, 0, 180);
         
        // Smoothly move each servo
         smoothMove(servo1, lastServo1Position, servo1Position, lastServo1StepTime, interval);
