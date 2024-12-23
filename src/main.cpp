@@ -119,6 +119,7 @@ void setup() {
     }
     accel.setRange(ADXL345_RANGE_2_G); // Set range to ±2g
     accel.setDataRate(ADXL345_DATARATE_100_HZ); // Adjust based on application
+    accel.set
     Serial.println("ADXL345 initialized.");
 
     // Initialize BLE
