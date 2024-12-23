@@ -21,12 +21,15 @@ Servo servo2;
 const int servo1Pin = 18;
 const int servo2Pin = 19;
 const int restingPosition = 135;
-const int interval = 15;
-const int deadBandWidth = 5; // Dead band width in microseconds
+const int interval = 10;
+const int deadBandWidth = 1; // Dead band width in microseconds
+
+unsigned long previousMillis = 0; // Stores the last time the servos were updated
+const unsigned long stepInterval = 50; // Update interval in milliseconds
 
 // Define missing variables
 int APin = 25;         // Example GPIO pin
-int freq = 1000;       // Frequency in Hz
+int freq = 50;       // Frequency in Hz
 ESP32PWM pwm;          // Create an instance of ESP32PWM
 
 Adafruit_ADXL345_Unified accel = Adafruit_ADXL345_Unified(12345);
@@ -37,13 +40,13 @@ bool useAccelerometerMode = true; // true for accelerometer mode, false for rand
 // Smoothing variables
 float smoothedPitch = 0;
 float smoothedRoll = 0;
-const float alpha = 0.5; // smoothing factor
+const float alpha = 0.005; // smoothing factor
 
 // Noise filtering variables
 float filteredX = 0;
 float filteredY = 0;
 float filteredZ = 0;
-const float noiseAlpha = 0.1; // Filtering factor for noise
+const float noiseAlpha = 0.5; // Filtering factor for noise
 
 /*
  * Description:
@@ -113,6 +116,8 @@ void setup() {
         Serial.println("Could not find a valid ADXL345 sensor, check wiring!");
         while (1);
     }
+    accel.setRange(ADXL345_RANGE_2_G); // Set range to ±2g
+    accel.setDataRate(ADXL345_DATARATE_100_HZ); // Adjust based on application
     Serial.println("ADXL345 initialized.");
 
     // Initialize BLE
@@ -149,13 +154,38 @@ void setup() {
     Serial.println("GATT server started.");
 }
 
+void smoothMove(Servo& servo, int& currentPos, int targetPos, unsigned long& lastStepTime, int stepDelay) {
+    if (millis() - lastStepTime >= stepDelay) {
+        lastStepTime = millis();
+        
+        // Calculate the step size (increase for larger differences)
+        int stepSize = max(1, abs(targetPos - currentPos) / 5); // Step size proportional to the difference
+        
+        if (currentPos < targetPos) {
+            currentPos = min(currentPos + stepSize, targetPos);
+        } else if (currentPos > targetPos) {
+            currentPos = max(currentPos - stepSize, targetPos);
+        }
+
+        servo.write(currentPos);
+    }
+}
+
 void loop() {
+    static unsigned long lastUpdate = 0;
     static int lastServo1Position = restingPosition;
     static int lastServo2Position = 180 - restingPosition;
-
-    if (useAccelerometerMode) {
-        sensors_event_t event;
-        accel.getEvent(&event);
+    static unsigned long lastServo1StepTime = 0;
+    static unsigned long lastServo2StepTime = 0;
+    unsigned long currentMillis = millis(); // Define and update currentMillis
+    
+    // Check if it's time to update
+    if (currentMillis - lastUpdate >= interval) {
+        lastUpdate = currentMillis;
+        
+        if (useAccelerometerMode) {
+            sensors_event_t event;
+            accel.getEvent(&event);
 
         // Apply noise filtering to accelerometer readings
         filteredX = noiseAlpha * event.acceleration.x + (1 - noiseAlpha) * filteredX;
@@ -172,22 +202,17 @@ void loop() {
         Serial.println(" m/s^2");
 
         // Calculate tilt angles
-        float pitch = atan2(event.acceleration.y, sqrt(pow(event.acceleration.x, 2) + pow(event.acceleration.z, 2))) * 180.0 / PI;
-        float roll = atan2(-event.acceleration.x, event.acceleration.z) * 180.0 / PI;
+        float pitch = atan2(filteredY, sqrt(pow(filteredX, 2) + pow(filteredZ, 2))) * 180.0 / PI;
+        float roll = atan2(-filteredX, filteredZ) * 180.0 / PI;
 
         // Map angles to servo positions
         int servo1Position = map(constrain(pitch, -90, 90), -90, 90, 0, 180);
         int servo2Position = map(constrain(roll, -90, 90), -90, 90, 0, 180);
         
-        // Update servos if change exceeds dead band width
-        if (abs(servo1Position - lastServo1Position) > deadBandWidth) {
-            servo1.write(servo1Position);
-            lastServo1Position = servo1Position;
-        }
-        if (abs(servo2Position - lastServo2Position) > deadBandWidth) {
-            servo2.write(servo2Position);
-            lastServo2Position = servo2Position;
-        }
+       // Smoothly move each servo
+        smoothMove(servo1, lastServo1Position, servo1Position, lastServo1StepTime, interval);
+        smoothMove(servo2, lastServo2Position, servo2Position, lastServo2StepTime, interval);
+            
     } else {
         // Random mode logic
         int randomPosition1 = random(0, 181);
@@ -200,7 +225,5 @@ void loop() {
         Serial.print(" Servo2: ");
         Serial.println(randomPosition2);
     }
-
-    // Delay to allow servos to settle
-    delay(interval);
+}
 }
