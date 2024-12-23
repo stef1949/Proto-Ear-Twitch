@@ -3,6 +3,7 @@
 #include <Wire.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_ADXL345_U.h>
+#include <math.h>
 
 // UUIDs for custom GATT service and characteristics
 #define TEMPERATURE_SERVICE_UUID       "12345678-1234-1234-1234-1234567890ab"
@@ -203,11 +204,11 @@ void loop() {
 
         // Calculate tilt angles
         float pitch = atan2(filteredY, sqrt(pow(filteredX, 2) + pow(filteredZ, 2))) * 180.0 / PI;
-        float roll = atan2(-filteredX, filteredZ) * 180.0 / PI;
+        float roll = atan2(-filteredX, sqrt(pow(filteredY, 2) + pow(filteredZ, 2))) * 180.0 / PI;
 
         // Map angles to servo positions
         int servo1Position = map(constrain(pitch, -90, 90), -90, 90, 0, 180);
-        int servo2Position = map(constrain(roll, -90, 90), -90, 90, 0, 180);
+        int servo2Position = map(constrain(roll, -89, 89), -90, 90, 0, 180);
         
        // Smoothly move each servo
         smoothMove(servo1, lastServo1Position, servo1Position, lastServo1StepTime, interval);
