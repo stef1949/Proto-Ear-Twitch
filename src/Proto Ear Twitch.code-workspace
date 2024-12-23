@@ -2,10 +2,6 @@
 	"folders": [
 		{
 			"path": ".."
-		},
-		{
-			"name": "LumiFur_Controller",
-			"path": "../../LumiFur_Controller"
 		}
 	],
 	"settings": {
