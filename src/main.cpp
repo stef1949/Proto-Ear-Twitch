@@ -5,11 +5,11 @@
 #include <Adafruit_ADXL345_U.h>
 
 // UUIDs for custom GATT service and characteristics
-#define TEMPERATURE_SERVICE_UUID       "12345678-1234-1234-1234-1234567890ab"
+#define TEMPERATURE_SERVICE_UUID        "12345678-1234-1234-1234-1234567890ab"
 #define TEMPERATURE_CHARACTERISTIC_UUID "abcd1234-5678-1234-5678-1234567890ab"
-#define CONTROL_CHARACTERISTIC_UUID    "1234abcd-5678-1234-5678-1234567890ab"
-#define TEMPERATURE_DESCRIPTOR_UUID    "2901"
-#define CONTROL_DESCRIPTOR_UUID        "2901"
+#define CONTROL_CHARACTERISTIC_UUID     "1234abcd-5678-1234-5678-1234567890ab"
+#define TEMPERATURE_DESCRIPTOR_UUID     "2901"
+#define CONTROL_DESCRIPTOR_UUID         "2901"
 
 bool isConnected = false;
 NimBLECharacteristic* pTemperatureCharacteristic;
@@ -33,6 +33,7 @@ Adafruit_ADXL345_Unified accel = Adafruit_ADXL345_Unified(12345);
 
 // Mode selection
 bool useAccelerometerMode = true; // true for accelerometer mode, false for random mode
+bool synchronizeServos = true; // Variable to synchronize servo movements
 
 // Smoothing variables
 float smoothedPitch = 0;
@@ -176,8 +177,8 @@ void loop() {
         float roll = atan2(-event.acceleration.x, event.acceleration.z) * 180.0 / PI;
 
         // Map angles to servo positions
-        int servo1Position = map(constrain(pitch, -90, 90), -90, 90, 0, 180);
-        int servo2Position = map(constrain(roll, -90, 90), -90, 90, 0, 180);
+        int servo1Position = map(constrain(pitch, -180, 180), -180, 180, 0, 180);
+        int servo2Position = map(constrain(roll, -180, 180), -180, 180, 0, 180);
         
         // Update servos if change exceeds dead band width
         if (abs(servo1Position - lastServo1Position) > deadBandWidth) {
