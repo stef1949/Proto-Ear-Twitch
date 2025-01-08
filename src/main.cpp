@@ -1,3 +1,4 @@
+#include <Arduino.h>
 #include <NimBLEDevice.h>
 #include <ESP32Servo.h>
 #include <Wire.h>
@@ -120,7 +121,7 @@ void setup() {
     }
     accel.setRange(ADXL345_RANGE_2_G); // Set range to ±2g
     accel.setDataRate(ADXL345_DATARATE_100_HZ); // Adjust based on application
-    accel.set
+    //accel.set
     Serial.println("ADXL345 initialized.");
 
     // Initialize BLE
