@@ -36,14 +36,6 @@ Adafruit_ADXL345_Unified accel = Adafruit_ADXL345_Unified(12345);
 // Mode selection
 bool synchronizeServos = true; // Variable to synchronize servo movements
 
-/////////Options/////////
-enum ModeOption {
-    ACCELEROMETER_MODE,  // Use accelerometer-based control
-    RANDOM_MODE,         // Use random servo positions
-    WAG_MODE             // Use wagging mode
-};
-ModeOption currentMode = WAG_MODE; // Set the initial mode
-
 // Smoothing variables
 float smoothedPitch = 0;
 float smoothedRoll = 0;
@@ -54,6 +46,116 @@ float filteredX = 0;
 float filteredY = 0;
 float filteredZ = 0;
 const float noiseAlpha = 1; // Filtering factor for noise. reduce for more filtering
+
+char BLEbroadcastName[30] =         "LumiWag :3";
+#define CHARACTERISTIC_UUID         "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"  // from client -> server
+#define SERVICE_UUID                "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"  // from server -> client
+
+/////////Options/////////
+enum ModeOption {
+    ACCELEROMETER_MODE,  // Use accelerometer-based control
+    RANDOM_MODE,         // Use random servo positions
+    WAG_MODE,             // Use wagging mode
+    MODE_OFF
+};
+ModeOption currentMode = WAG_MODE; // Set the initial mode
+
+bool detectMotion() {
+    sensors_event_t event;
+    accel.getEvent(&event);
+    float threshold = 1.0; // Adjust threshold as needed
+    return (abs(event.acceleration.x) > threshold ||
+            abs(event.acceleration.y) > threshold ||
+            abs(event.acceleration.z) > threshold);
+}
+
+void wakeFromSleepMode() {
+    if (!sleepModeActive) return; // Already awake
+    
+    Serial.println("Waking from sleep mode");
+    sleepModeActive = false;
+
+    // Restore normal CPU speed
+    restoreNormalCPUSpeed();
+    
+    lastActivityTime = millis(); // Reset activity timer
+    
+    // Notify all clients if connected
+    if (deviceConnected) {
+      // Also send current view back to the app
+    }
+    
+    
+    // Restore normal BLE advertising if not connected
+    if (!deviceConnected) {
+      NimBLEDevice::getAdvertising()->setMinInterval(160); // 100 ms (default)
+      NimBLEDevice::getAdvertising()->setMaxInterval(240); // 150 ms (default)
+      NimBLEDevice::startAdvertising();
+    }
+  }
+
+// Class to handle characteristic callbacks
+class CharacteristicCallbacks : public NimBLECharacteristicCallbacks {
+    void onRead(NimBLECharacteristic* pCharacteristic, NimBLEConnInfo& connInfo) override {
+          uint8_t viewValue = static_cast<uint8_t>(currentView);
+          pCharacteristic->setValue(&viewValue, 1);
+          Serial.printf("Read request - returned view: %d\n", viewValue);
+      }
+  
+    void onWrite(NimBLECharacteristic* pCharacteristic, NimBLEConnInfo& connInfo) {
+          std::string value = pCharacteristic->getValue();
+          if(value.length() > 0) {
+              uint8_t newView = value[0];
+  
+            // Command to wake from sleep mode (e.g., sending 255)
+            if (newView == 255 && sleepModeActive) {
+              sleepModeActive = false;
+              wakeFromSleepMode();
+              return;
+            }
+            // Normal view change
+            if (newView >= 1 && newView <=12 && newView != currentView) {
+                currentView = newView;
+                lastActivityTime = millis(); // BLE command counts as activity
+                Serial.printf("Write request - new view: %d\n", currentView);
+                pCharacteristic->notify();
+              }
+          }
+      }
+  
+    void onStatus(NimBLECharacteristic* pCharacteristic, int code) override {
+          Serial.printf("Notification/Indication return code: %d, %s\n", code, NimBLEUtils::returnCodeToString(code));
+      }
+    void onSubscribe(NimBLECharacteristic* pCharacteristic, NimBLEConnInfo& connInfo, uint16_t subValue) override {
+          std::string str  = "Client ID: ";
+          str             += connInfo.getConnHandle();
+          str             += " Address: ";
+          str             += connInfo.getAddress().toString();
+          if (subValue == 0) {
+              str += " Unsubscribed to ";
+          } else if (subValue == 1) {
+              str += " Subscribed to notifications for ";
+          } else if (subValue == 2) {
+              str += " Subscribed to indications for ";
+          } else if (subValue == 3) {
+              str += " Subscribed to notifications and indications for ";
+          }
+          str += std::string(pCharacteristic->getUUID());
+  
+          Serial.printf("%s\n", str.c_str());
+      }
+  } chrCallbacks; 
+  
+  class DescriptorCallbacks : public NimBLEDescriptorCallbacks {
+      void onWrite(NimBLEDescriptor* pDescriptor, NimBLEConnInfo& connInfo) override {
+          std::string dscVal = pDescriptor->getValue();
+          Serial.printf("Descriptor written value: %s\n", dscVal.c_str());
+      }
+  
+      void onRead(NimBLEDescriptor* pDescriptor, NimBLEConnInfo& connInfo) override {
+          Serial.printf("%s Descriptor read\n", pDescriptor->getUUID().toString().c_str());
+      }
+  } dscCallbacks;
 
 /*
  * Description:
@@ -68,6 +170,7 @@ const float noiseAlpha = 1; // Filtering factor for noise. reduce for more filte
  * - Ensure common ground between ESP32, servos, and power source.
  */
 
+/*
  // Class to handle characteristic callbacks
 class CharacteristicCallbacks : public NimBLECharacteristicCallbacks {
     void onRead(NimBLECharacteristic* pCharacteristic, NimBLEConnInfo& connInfo) override {
@@ -117,7 +220,7 @@ class CharacteristicCallbacks : public NimBLECharacteristicCallbacks {
           Serial.printf("%s Descriptor read\n", pDescriptor->getUUID().toString().c_str());
       }
   } dscCallbacks;
-
+*/
 void setup() {
     // Allow allocation of all timers and Initialize servos
 	ESP32PWM::allocateTimer(0);
@@ -135,6 +238,9 @@ void setup() {
     servo1.write(restingPosition);   // Set to resting position
     servo2.write(180 - restingPosition); // Set to opposite of resting position
 
+    // Start BLE service
+    bleSetup();
+
     // Initialize ADXL345
     if (!accel.begin()) {
         Serial.println("Could not find a valid ADXL345 sensor, check wiring!");
@@ -145,7 +251,10 @@ void setup() {
     // accel.set (removed as it is not a valid method)
     Serial.println("ADXL345 initialized.");
 
-    // Initialize BLE
+}
+
+void bleSetup()
+{
   Serial.println("Initializing BLE...");
   NimBLEDevice::init("LumiFur_Controller");
   NimBLEDevice::setPower(ESP_PWR_LVL_P9); // Power level 9 (highest) for best range
@@ -153,68 +262,38 @@ void setup() {
   pServer = NimBLEDevice::createServer();
   pServer->setCallbacks(&serverCallbacks);
 
-  NimBLEService* pService = pServer->createService(SERVICE_UUID);
-  
+  NimBLEService *pService = pServer->createService(SERVICE_UUID);
+
   // Face control characteristic with encryption
   pFaceCharacteristic = pService->createCharacteristic(
-    CHARACTERISTIC_UUID,
-    //NIMBLE_PROPERTY::READ |
-    //NIMBLE_PROPERTY::WRITE |
-    NIMBLE_PROPERTY::NOTIFY |
-    NIMBLE_PROPERTY::READ_ENC | // only allow reading if paired / encrypted
-    NIMBLE_PROPERTY::WRITE_ENC  // only allow writing if paired / encrypted
-  );
-  
-  // Set initial view value
-  uint8_t viewValue = static_cast<uint8_t>(currentView);
-  pFaceCharacteristic->setValue(&viewValue, 1);
-  pFaceCharacteristic->setCallbacks(&chrCallbacks);
-
-  // Temperature characteristic with encryption
-  pTemperatureCharacteristic = 
-    pService->createCharacteristic(
-      TEMPERATURE_CHARACTERISTIC_UUID,
-      NIMBLE_PROPERTY::READ |
-      NIMBLE_PROPERTY::NOTIFY 
-      //NIMBLE_PROPERTY::READ_ENC
-  );
-  
-  // Config characteristic with encryption
-  pConfigCharacteristic = pService->createCharacteristic(
-      CONFIG_CHARACTERISTIC_UUID,
+      CHARACTERISTIC_UUID,
+      // NIMBLE_PROPERTY::READ |
+      // NIMBLE_PROPERTY::WRITE |
       NIMBLE_PROPERTY::NOTIFY |
-      NIMBLE_PROPERTY::READ_ENC |
-      NIMBLE_PROPERTY::WRITE_ENC
+          NIMBLE_PROPERTY::READ_ENC | // only allow reading if paired / encrypted
+          NIMBLE_PROPERTY::WRITE_ENC  // only allow writing if paired / encrypted
   );
 
-  // Set up descriptors
-  NimBLE2904* pFormat2904 = pFaceCharacteristic->create2904();
-  pFormat2904->setFormat(NimBLE2904::FORMAT_UINT8);
-  pFormat2904->setUnit(0x2700); // Unit-less number
-  pFormat2904->setCallbacks(&dscCallbacks);
 
   // Add user description descriptor
-  NimBLEDescriptor* pDesc = 
+  NimBLEDescriptor *pDesc =
       pFaceCharacteristic->createDescriptor(
           "2901",
           NIMBLE_PROPERTY::READ,
-          20
-      );
-  pDesc->setValue("Face Control");
+          20);
+  pDesc->setValue("Tail wagging control");
 
-  //nimBLEService* pBaadService = pServer->createService("BAAD");
+  // nimBLEService* pBaadService = pServer->createService("BAAD");
   pService->start();
 
   /** Create an advertising instance and add the services to the advertised data */
-  NimBLEAdvertising* pAdvertising = NimBLEDevice::getAdvertising();
-  pAdvertising->setName("LumiFur Wag Controller");
+  NimBLEAdvertising *pAdvertising = NimBLEDevice::getAdvertising();
+  pAdvertising->setName("LumiWag_Controller");
   pAdvertising->addServiceUUID(pService->getUUID());
   pAdvertising->enableScanResponse(true);
   pAdvertising->start();
 
   Serial.println("BLE setup complete - advertising started");
-
-    Serial.println("GATT server started.");
 }
 
 void smoothMove(Servo& servo, int& currentPos, int targetPos, unsigned long& lastStepTime, int stepDelay) {
@@ -234,6 +313,56 @@ void smoothMove(Servo& servo, int& currentPos, int targetPos, unsigned long& las
     }
 }
 
+void enterSleepMode() {
+    Serial.println("Entering sleep mode");
+    sleepModeActive = true;
+
+    // Reduce CPU speed for power saving
+    reduceCPUSpeed();
+    
+    // Notify all clients of sleep mode if connected
+    if (deviceConnected) {
+      // Send a message through the temperature characteristic
+      char sleepMsg[] = "Sleep Mode Active";
+      pTemperatureCharacteristic->setValue(sleepMsg);
+      pTemperatureCharacteristic->notify();
+    }
+    
+    // Additional sleep actions
+    if (!deviceConnected) {
+      // Increase BLE advertising interval to save power during sleep
+      NimBLEDevice::getAdvertising()->setMinInterval(1600); // 1000 ms (units of 0.625 ms)
+      NimBLEDevice::getAdvertising()->setMaxInterval(2000); // 1250 ms (units of 0.625 ms)
+      NimBLEDevice::startAdvertising();
+    }
+  }
+
+void checkSleepMode() {
+  static unsigned long lastAccelCheck = 0;
+  const unsigned long accelCheckInterval = 1000; // Check motion once per second to save power
+  
+  // Only check accelerometer periodically to save power
+  if (millis() - lastAccelCheck >= accelCheckInterval) {
+    lastAccelCheck = millis();
+    
+    // Check for motion
+    //if (detectMotion()) {
+      lastActivityTime = millis();
+      
+      // If we were in sleep mode, wake up
+      if (sleepModeActive) {
+        wakeFromSleepMode();
+      }
+    //} 
+    else {
+      // Check if it's time to enter sleep mode
+      if (!sleepModeActive && (millis() - lastActivityTime > SLEEP_TIMEOUT_MS)) {
+        enterSleepMode();
+      }
+    }
+  }
+}
+
 void loop() {
     //servo1.attach(servo1Pin, minUs, maxUs);
 	//servo2.attach(servo2Pin, minUs, maxUs);
@@ -244,109 +373,143 @@ void loop() {
     static unsigned long lastServo1StepTime = 0;
     static unsigned long lastServo2StepTime = 0;
     unsigned long currentMillis = millis(); // Define and update currentMillis
-    
+    int currentMode = 2; // Set the current mode to random mode
+    // If the device is in sleep mode, use low-sensitivity motion detection to wake it.
+    // Set initial mode value
+    uint8_t modeValue = static_cast<uint8_t>(currentMode);
+    pFaceCharacteristic->setValue(&modeValue, 1);
+    pFaceCharacteristic->setCallbacks(&chrCallbacks);
+
+    handleBLEConnection();
+    checkSleepMode();
+
+  if (sleepModeActive) {
+    // Ensure low sensitivity (useShakeSensitivity = false).
+    if (detectMotion()) {
+      // Motion detected with the low threshold – wake up the device.
+      wakeFromSleepMode();
+    }
+  } else {
     // Check if it's time to update
     if (currentMillis - lastUpdate >= interval) {
         lastUpdate = currentMillis;
         
         switch (currentMode) {
-            case ACCELEROMETER_MODE: {
-            sensors_event_t event;
-            accel.getEvent(&event);
+            case 0: {   // ACCELEROMETER_MODE
+                sensors_event_t event;
+                accel.getEvent(&event);
 
-        // Apply noise filtering to accelerometer readings
-        filteredX = noiseAlpha * event.acceleration.x + (1 - noiseAlpha) * filteredX; // Apply noise filtering. Reduce noiseAlpha for more filtering
-        filteredY = noiseAlpha * event.acceleration.y + (1 - noiseAlpha) * filteredY;
-        filteredZ = noiseAlpha * event.acceleration.z + (1 - noiseAlpha) * filteredZ;
+                // Apply noise filtering
+                filteredX = noiseAlpha * event.acceleration.x + (1 - noiseAlpha) * filteredX;
+                filteredY = noiseAlpha * event.acceleration.y + (1 - noiseAlpha) * filteredY;
+                filteredZ = noiseAlpha * event.acceleration.z + (1 - noiseAlpha) * filteredZ;
 
-        // Print filtered accelerometer readings to Serial
-        Serial.print("Filtered X: ");
-        Serial.print(filteredX);
-        Serial.print(" m/s^2, Filtered Y: ");
-        Serial.print(filteredY);
-        Serial.print(" m/s^2, Filtered Z: ");
-        Serial.print(filteredZ);
-        Serial.println(" m/s^2");
+                Serial.print("Filtered X: ");
+                Serial.print(filteredX);
+                Serial.print(" m/s^2, Filtered Y: ");
+                Serial.print(filteredY);
+                Serial.print(" m/s^2, Filtered Z: ");
+                Serial.print(filteredZ);
+                Serial.println(" m/s^2");
 
-        // Calculate tilt angles
-        float pitch = atan(filteredY / sqrt(pow(filteredX, 2) + pow(filteredZ, 2))) * 180.0 / PI; // Convert to degrees
-        float roll = atan(-filteredX / sqrt(pow(filteredY, 2) + pow(filteredZ, 2))) * 180.0 / PI; // Convert to degrees
+                // Calculate tilt angles in degrees
+                float pitch = atan(filteredY / sqrt(pow(filteredX, 2) + pow(filteredZ, 2))) * 180.0 / PI;
+                float roll  = atan(-filteredX / sqrt(pow(filteredY, 2) + pow(filteredZ, 2))) * 180.0 / PI;
 
-        // Map angles to servo positions
-        int servo1Position = map(constrain(pitch, -180, 180), -180, 180, 0, 180); // Constrain pitch to [-180, 180] and map to [0, 180]
-        int servo2Position = map(constrain(roll, -180, 180), -180, 180, 0, 180); // Constrain roll to [-180, 180] and map to [0, 180]
-        
-       // Smoothly move each servo
-        smoothMove(servo1, lastServo1Position, servo1Position, lastServo1StepTime, interval); 
-        smoothMove(servo2, lastServo2Position, servo2Position, lastServo2StepTime, interval); 
-        break;    
-    }
-    
-    case RANDOM_MODE: {
-        // Random mode logic
-        int randomPosition1 = random(0, 181);
-        int randomPosition2 = random(0, 181);
+                // Map angles to servo positions (0 to 180)
+                int servo1Position = map(constrain(pitch, -180, 180), -180, 180, 0, 180);
+                int servo2Position = map(constrain(roll,  -180, 180), -180, 180, 0, 180);
+                
+                // Smoothly move each servo using stepInterval (instead of interval)
+                smoothMove(servo1, lastServo1Position, servo1Position, lastServo1StepTime, stepInterval);
+                smoothMove(servo2, lastServo2Position, servo2Position, lastServo2StepTime, stepInterval);
+                
+                // Update last positions
+                lastServo1Position = servo1Position;
+                lastServo2Position = servo2Position;
+                break;
+            }
+            
+            case 1: { // RANDOM_MODE
+                // Generate random positions between 0 and 180
+                int randomPosition1 = random(0, 181);
+                int randomPosition2 = random(0, 181);
 
                 servo1.write(randomPosition1);
                 servo2.write(randomPosition2);
                 Serial.print("Random mode: Servo1: ");
-                Serial.println(randomPosition1);
+                Serial.print(randomPosition1);
                 Serial.print(" Servo2: ");
                 Serial.println(randomPosition2);
+                
+                // Update last positions so smoothing starts from these values if needed
+                lastServo1Position = randomPosition1;
+                lastServo2Position = randomPosition2;
                 break;
+            }
             
-            }
-    case WAG_MODE: {
-        // Wag mode: oscillate servo positions within a preset range
-        static int wagServo1 = restingPosition;
-        //static int wagServo2 = 180 - restingPosition;
-        static bool increasing1 = true;
-        //static bool increasing2 = false; // Using opposite direction for variety
-        const int wagStep = 3; // Wag step size
-        const int wagRange = 20; // Wag range offset
+            case 2: { //WAG_MODE
+                // Wag mode: oscillate both servos within preset ranges
+                static int wagServo1 = restingPosition;
+                static int wagServo2 = 180 - restingPosition;
+                static bool increasing1 = true;
+                static bool increasing2 = false;  // Use opposite direction for variety
+                const int wagStep = 3;   // Wag step size
+                const int wagRange = 20; // Wag range offset
 
-        int lowerBound1 = restingPosition - wagRange;
-        int upperBound1 = restingPosition + wagRange;
-        //int lowerBound2 = (180 - restingPosition) - wagRange;
-        //int upperBound2 = (180 - restingPosition) + wagRange;
+                int lowerBound1 = restingPosition - wagRange;
+                int upperBound1 = restingPosition + wagRange;
+                int lowerBound2 = (180 - restingPosition) - wagRange;
+                int upperBound2 = (180 - restingPosition) + wagRange;
 
-        // Update servo1 position
-        if (increasing1) {
-            wagServo1 += wagStep;
-            if (wagServo1 >= upperBound1) {
-                increasing1 = false;
+                // Update servo1 position
+                if (increasing1) {
+                    wagServo1 += wagStep;
+                    if (wagServo1 >= upperBound1)
+                        increasing1 = false;
+                } else {
+                    wagServo1 -= wagStep;
+                    if (wagServo1 <= lowerBound1)
+                        increasing1 = true;
+                }
+
+                // Update servo2 position
+                if (increasing2) {
+                    wagServo2 += wagStep;
+                    if (wagServo2 >= upperBound2)
+                        increasing2 = false;
+                } else {
+                    wagServo2 -= wagStep;
+                    if (wagServo2 <= lowerBound2)
+                        increasing2 = true;
+                }
+                
+                servo1.write(wagServo1);
+                servo2.write(wagServo2);
+                //Serial.print("Wag mode: Servo1: ");
+                //Serial.print(wagServo1);
+                //Serial.print(" Servo2: ");
+                //Serial.println(wagServo2);
+                
+                // Update last positions
+                lastServo1Position = wagServo1;
+                lastServo2Position = wagServo2;
+                break;
             }
-        } else {
-            wagServo1 -= wagStep;
-            if (wagServo1 <= lowerBound1) {
-                increasing1 = true;
+            
+            case 4: { // MODE_OFF
+                // Stop servos by setting them to their resting positions
+                servo1.write(restingPosition);
+                servo2.write(180 - restingPosition);
+                lastServo1Position = restingPosition;
+                lastServo2Position = 180 - restingPosition;
+                Serial.println("MODE_OFF: Servos set to resting positions.");
+                break;
+            }
+            default: {
+                break;
             }
         }
-/*
-        // Update servo2 position
-        if (increasing2) {
-            wagServo2 += wagStep;
-            if (wagServo2 >= upperBound2) {
-                increasing2 = false;
-            }
-        } else {
-            wagServo2 -= wagStep;
-            if (wagServo2 <= lowerBound2) {
-                increasing2 = true;
-            }
-        }
-*/
-        servo1.write(wagServo1);
-        //servo2.write(wagServo2);
-        Serial.print("Wag mode: Servo1: ");
-        Serial.println(wagServo1);
-        //Serial.print(" Servo2: ");
-        //Serial.println(wagServo2);
-        // Update last positions to ensure consistency if switched later
-        lastServo1Position = wagServo1;
-        //lastServo2Position = wagServo2;
-        break;
-    }
-    }
+        } // end switch
 }
-}
+  }

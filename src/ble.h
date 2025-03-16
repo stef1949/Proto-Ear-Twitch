@@ -4,11 +4,6 @@
 /////////////////BLE CONFIG/////////////////
 ////////////////////////////////////////////
 
-#define SERVICE_UUID                    "01931c44-3867-7740-9867-c822cb7df308"
-#define CHARACTERISTIC_UUID             "01931c44-3867-7427-96ab-8d7ac0ae09fe"
-#define CONFIG_CHARACTERISTIC_UUID      "01931c44-3867-7427-96ab-8d7ac0ae09ff"
-#define TEMPERATURE_CHARACTERISTIC_UUID "01931c44-3867-7b5d-9774-18350e3e27db"
-
 bool deviceConnected = false;
 bool oldDeviceConnected = false;
 
@@ -17,7 +12,7 @@ NimBLEServer* pServer = nullptr;
 NimBLECharacteristic* pCharacteristic = nullptr;
 NimBLECharacteristic* pFaceCharacteristic = nullptr;
 NimBLECharacteristic* pTemperatureCharacteristic = nullptr;
-NimBLECharacteristic* pConfigCharacteristic = nullptr;
+//NimBLECharacteristic* pConfigCharacteristic = nullptr;
 
 // Class to handle BLE server callbacks
 class ServerCallbacks : public NimBLEServerCallbacks {
@@ -103,3 +98,19 @@ void updateTemperature() {
   }
 }
 
+void handleBLEConnection() {
+    if (deviceConnected != oldDeviceConnected) {
+        if (deviceConnected) {
+            //statusPixel.setPixelColor(0, 0, 100, 0); // Green when connected
+        } else {
+            //statusPixel.setPixelColor(0, 0, 0, 0); // Off when disconnected
+            NimBLEDevice::startAdvertising();
+        }
+        //statusPixel.show();
+        oldDeviceConnected = deviceConnected;
+    }
+    
+    if (!deviceConnected) {
+        //fadeInAndOutLED(0, 0, 100); // Blue fade when disconnected
+    }
+}
