@@ -1,13 +1,16 @@
+#ifndef BLE_H
+#define BLE_H
+
 #include <NimBLEDevice.h>
 
 ////////////////////////////////////////////
 /////////////////BLE CONFIG/////////////////
 ////////////////////////////////////////////
 
-#define SERVICE_UUID                    "01931c44-3867-7740-9867-c822cb7df308"
-#define CHARACTERISTIC_UUID             "01931c44-3867-7427-96ab-8d7ac0ae09fe"
-#define CONFIG_CHARACTERISTIC_UUID      "01931c44-3867-7427-96ab-8d7ac0ae09ff"
-#define TEMPERATURE_CHARACTERISTIC_UUID "01931c44-3867-7b5d-9774-18350e3e27db"
+#define SERVICE_UUID                    "01931c45-3867-7740-9867-c822cb7df308"
+#define CHARACTERISTIC_UUID             "01931c45-3867-7427-96ab-8d7ac0ae09fe"
+#define CONFIG_CHARACTERISTIC_UUID      "01931c45-3867-7427-96ab-8d7ac0ae09ff"
+#define TEMPERATURE_CHARACTERISTIC_UUID "01931c45-3867-7b5d-9774-18350e3e27db"
 
 bool deviceConnected = false;
 bool oldDeviceConnected = false;
@@ -75,6 +78,7 @@ class ServerCallbacks : public NimBLEServerCallbacks {
 
 } serverCallbacks;
 
+
 //Temp Non-Blocking Variables
 unsigned long temperatureMillis = 0;
 const unsigned long temperatureInterval = 5000; // 1 second interval for temperature update
@@ -103,3 +107,4 @@ void updateTemperature() {
   }
 }
 
+#endif /* BLE_H */
